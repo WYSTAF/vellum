@@ -1,0 +1,57 @@
+Vellum contrast audit -- light
+WCAG 2 relative luminance and APCA Lc (0.1.9).
+Thresholds: 4.5:1 body, 3.0:1 large/non-text. APCA |Lc| >= 45 body, >= 30 large.
+
+foreground    background   WCAG    APCA   verdict
+------------------------------------------------------
+ink           bg         17.40:  107.0   ok
+body          bg         10.24:   96.5   ok
+muted         bg          6.58:   85.3   ok
+body          surface     9.72:   92.9   ok
+muted         surface     6.25:   81.7   ok
+body          raised      8.81:   86.3   ok
+muted         raised      5.66:   75.1   ok
+ink           raised     14.98:   96.8   ok
+accent_text   bg         10.60:   96.7   ok
+accent_text   raised      9.12:   86.6   ok
+on_accent     accent      5.90:   47.9   ok
+you           bg          6.69:   85.5   ok
+you           raised      5.76:   75.4   ok
+machine       bg          6.48:   84.8   ok
+machine       raised      5.58:   74.6   ok
+claude        bg         17.40:  107.0   ok
+danger        bg         10.60:   96.7   ok
+success       bg          6.69:   85.5   ok
+
+All pairs pass WCAG AA.
+
+======================================================
+
+Vellum contrast audit -- dark
+WCAG 2 relative luminance and APCA Lc (0.1.9).
+Thresholds: 4.5:1 body, 3.0:1 large/non-text. APCA |Lc| >= 45 body, >= 30 large.
+
+foreground    background   WCAG    APCA   verdict
+------------------------------------------------------
+ink           bg         13.78: -100.2   ok
+body          bg          9.88:  -78.0   ok
+muted         bg          7.07:  -59.8   ok
+body          surface     8.62:  -76.0   ok
+muted         surface     6.17:  -57.7   ok
+body          raised      7.52:  -73.5   ok
+muted         raised      5.38:  -55.2   ok
+ink           raised     10.48:  -95.7   ok
+accent_text   bg          6.75:  -57.8   ok
+accent_text   raised      5.14:  -53.3   ok
+on_accent     accent      5.90:   47.9   ok
+you           bg          6.86:  -58.5   ok
+you           raised      5.22:  -54.0   ok
+machine       bg          7.14:  -60.2   ok
+machine       raised      5.43:  -55.7   ok
+claude        bg         13.78: -100.2   ok
+danger        bg          6.75:  -57.8   ok
+success       bg          4.72:  -42.2   ok
+
+All pairs pass WCAG AA.
+
+TOTAL: all pairs pass in both themes.

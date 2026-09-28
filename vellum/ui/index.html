@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vellum</title>
+<link rel="stylesheet" href="/static/css/tokens.css">
+<link rel="stylesheet" href="/static/css/app.css">
+</head>
+<body>
+
+<div class="app" id="app">
+
+  <!-- ── rail ─────────────────────────────────────────────────────── -->
+  <nav class="rail" aria-label="Sections">
+    <div class="rail__brand">
+      <span class="mark" aria-hidden="true"></span>
+      <span class="rail__name">Vellum</span>
+    </div>
+
+    <div class="rail__group">
+      <button class="rail__item is-on" data-view="library" aria-current="page">
+        <span class="rail__label">Conversations</span>
+        <span class="rail__count" id="c-total">—</span>
+      </button>
+      <button class="rail__item" data-view="search">
+        <span class="rail__label">Search</span>
+      </button>
+      <button class="rail__item" data-view="pinned">
+        <span class="rail__label">Pinned</span>
+        <span class="rail__count" id="c-pinned">0</span>
+      </button>
+      <button class="rail__item" data-view="stats">
+        <span class="rail__label">Archive</span>
+      </button>
+    </div>
+
+    <div class="rail__projects">
+      <div class="rail__head">
+        <span>Projects</span>
+        <button class="mini" id="btn-projects-more" title="All projects">All</button>
+      </div>
+      <ul class="projs" id="projs" role="listbox" aria-label="Filter by project"></ul>
+    </div>
+
+    <div class="rail__foot">
+      <button class="mini" id="btn-theme" title="Switch theme (T)">◐ Theme</button>
+      <button class="mini" id="btn-rescan" title="Re-scan (F5)">↻ Scan</button>
+    </div>
+  </nav>
+
+  <!-- ── list column ──────────────────────────────────────────────── -->
+  <section class="list" aria-label="Conversations">
+    <header class="list__head">
+      <div class="field">
+        <input id="q" type="search" placeholder="Search every conversation…"
+               autocomplete="off" spellcheck="false" aria-label="Search">
+        <button class="field__clear" id="q-clear" hidden aria-label="Clear search">✕</button>
+      </div>
+      <div class="list__meta">
+        <span id="result-line">Loading…</span>
+        <select id="sort" aria-label="Sort">
+          <option value="recent">Most recent</option>
+          <option value="oldest">Oldest</option>
+          <option value="turns">Most turns</option>
+          <option value="size">Largest</option>
+        </select>
+      </div>
+    </header>
+
+    <div class="list__body" id="list" role="listbox" aria-label="Conversation list" tabindex="0"></div>
+    <div class="list__foot" id="list-foot" hidden>
+      <button class="btn btn--ghost" id="btn-more">Show more</button>
+    </div>
+  </section>
+
+  <!-- ── reader ───────────────────────────────────────────────────── -->
+  <main class="reader" id="reader" aria-label="Conversation">
+    <div class="reader__empty" id="reader-empty">
+      <div class="empty__mark" aria-hidden="true"></div>
+      <h2>Your archive, read properly</h2>
+      <p id="empty-hint">
+        Pick a conversation on the left, or press <kbd>/</kbd> to search everything
+        you have ever typed into Claude Code.
+      </p>
+    </div>
+
+    <article class="reader__doc" id="doc" hidden>
+      <header class="reader__head">
+        <h1 id="doc-title"></h1>
+        <div class="reader__facts" id="doc-facts"></div>
+        <div class="reader__tools">
+          <label class="toggle"><input type="checkbox" id="t-tools" checked><span>Tools</span></label>
+          <label class="toggle"><input type="checkbox" id="t-thinking"><span>Thinking</span></label>
+          <select id="export-fmt" aria-label="Export format">
+            <option value="md">Markdown</option>
+            <option value="html">HTML</option>
+            <option value="json">JSON</option>
+            <option value="txt">Text</option>
+            <option value="csv">CSV</option>
+          </select>
+          <button class="btn btn--ghost" id="btn-copy">Copy</button>
+          <button class="btn btn--ghost" id="btn-pin" title="Pin (P)">☆</button>
+          <button class="btn btn--primary" id="btn-export">Export</button>
+        </div>
+        <nav class="outline" id="outline" aria-label="Jump to message"></nav>
+      </header>
+      <div class="reader__body" id="body"></div>
+      <footer class="reader__foot" id="reader-foot"></footer>
+    </article>
+  </main>
+
+  <!-- ── status ───────────────────────────────────────────────────── -->
+  <footer class="status" id="status">
+    <span class="status__dot" id="status-dot"></span>
+    <span id="status-text">Starting…</span>
+    <span class="status__spacer"></span>
+    <span id="status-right"></span>
+  </footer>
+
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

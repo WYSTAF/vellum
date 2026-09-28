@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vellum"
+version = "1.0.0"
+description = "A local reader for your Claude Code conversation archive"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+# orjson is optional: the parser falls back to the stdlib decoder without it,
+# at roughly 2x the parse time. Everything else is required.
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn>=0.27",
+    "pydantic>=2.5",
+]
+
+[project.optional-dependencies]
+fast = ["orjson>=3.9"]
+window = ["pywebview>=4.4"]
+dev = ["pytest>=8.0", "httpx"]
+
+[project.scripts]
+vellum = "vellum.launcher:main"
+
+[project.gui-scripts]
+vellum = "vellum.launcher:main"
+
+[tool.setuptools.packages.find]
+include = ["vellum*"]
+
+[tool.setuptools.package-data]
+vellum = ["ui/*.html", "ui/*.js", "ui/css/*.css", "ui/css/*.txt"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning"]

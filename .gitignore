@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# The index and the exports are personal data, never source.
+*.db
+*.db-wal
+*.db-shm
+exports/
+
+# Tooling
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Local scratch
+reindex.txt
+reindex.log
+*.part

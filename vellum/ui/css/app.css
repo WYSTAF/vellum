@@ -1,0 +1,482 @@
+/* Vellum — the whole interface.
+ *
+ * The organising idea: this is an archive *reader*, not a database browser.
+ * Three columns exist because three kinds of question exist — what do I have,
+ * what did I say, and where was I. The reading surface is the widest column
+ * and has a hard measure cap, because a transcript is a document and
+ * documents have a line length.
+ *
+ * Everything below resolves to a token in tokens.css. There are no literal
+ * colours in this file except the syntax-highlight ramp, which is a
+ * different concern (it has to match Pygments' class names).
+ */
+
+/* ── reset ─────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; }
+/* The UA's `[hidden] { display: none }` loses to any later `display` rule,
+   so a hidden flex/grid element keeps its box and pushes the real content
+   off-screen. This has to be explicit, and it has to be early. */
+[hidden] { display: none !important; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--body);
+  font: 400 13.5px/1.5 "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+h1, h2, h3, p, ul, ol, figure, pre { margin: 0; }
+ul, ol { padding: 0; list-style: none; }
+button, input, select { font: inherit; color: inherit; }
+button { background: none; border: 0; cursor: pointer; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+::selection { background: var(--accent-soft); color: var(--ink); }
+
+/* Scrollbars: present but quiet. A reader with loud scrollbars is a reader
+   you cannot read in. */
+* { scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: 6px; border: 3px solid transparent; background-clip: content-box; }
+*::-webkit-scrollbar-thumb:hover { background: var(--muted); background-clip: content-box; }
+
+/* ── shell ─────────────────────────────────────────────────────────── */
+.app {
+  display: grid;
+  grid-template-columns: 216px minmax(320px, 400px) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) 26px;
+  grid-template-areas: "rail list reader" "status status status";
+  height: 100vh;
+}
+.rail   { grid-area: rail; }
+.list   { grid-area: list; }
+.reader { grid-area: reader; }
+.status { grid-area: status; }
+
+@media (max-width: 1100px) {
+  .app { grid-template-columns: 180px minmax(260px, 340px) minmax(0, 1fr); }
+}
+
+/* ── rail ──────────────────────────────────────────────────────────── */
+.rail {
+  display: flex; flex-direction: column;
+  background: var(--surface);
+  border-right: 1px solid var(--line);
+  overflow: hidden;
+}
+.rail__brand {
+  display: flex; align-items: center; gap: 9px;
+  padding: 16px 16px 14px;
+}
+.mark {
+  width: 15px; height: 15px; flex: none;
+  border-radius: 3px;
+  background: var(--accent);
+  box-shadow: inset 0 0 0 1px rgb(0 0 0 / .12);
+}
+.rail__name {
+  font-size: 14.5px; font-weight: 600; letter-spacing: -.01em;
+  color: var(--ink);
+}
+.rail__group { padding: 2px 8px 10px; display: flex; flex-direction: column; gap: 1px; }
+.rail__item {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  /* 32px minimum hit target; the previous versions used 30 and it showed. */
+  min-height: 32px; padding: 0 9px;
+  border-radius: 5px;
+  color: var(--body);
+  text-align: left;
+  transition: background .12s ease, color .12s ease;
+}
+.rail__item:hover { background: var(--hover); }
+.rail__item.is-on { background: var(--active); color: var(--ink); font-weight: 600; }
+.rail__label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rail__count {
+  font: 500 11px/1 "Cascadia Mono", Consolas, monospace;
+  color: var(--muted); font-variant-numeric: tabular-nums;
+}
+.rail__item.is-on .rail__count { color: var(--ink); }
+
+.rail__projects {
+  flex: 1; min-height: 0; overflow-y: auto;
+  border-top: 1px solid var(--line-soft);
+  padding: 10px 8px 8px;
+}
+.rail__head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 9px 7px;
+  font-size: 10.5px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase;
+  color: var(--muted);
+}
+.projs { display: flex; flex-direction: column; gap: 1px; }
+.proj {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  min-height: 30px; padding: 0 9px;
+  border-radius: 5px; color: var(--body);
+  text-align: left; font-size: 12.5px;
+  transition: background .12s ease;
+}
+.proj:hover { background: var(--hover); }
+.proj.is-on { background: var(--active); color: var(--ink); font-weight: 600; }
+.proj__name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.proj__n {
+  font: 500 11px/1 "Cascadia Mono", Consolas, monospace;
+  color: var(--muted); font-variant-numeric: tabular-nums; flex: none;
+}
+.rail__foot {
+  display: flex; gap: 6px; padding: 9px 12px;
+  border-top: 1px solid var(--line-soft);
+}
+.mini {
+  min-height: 28px; padding: 0 9px;
+  border-radius: 5px; border: 1px solid var(--line);
+  color: var(--muted); font-size: 12px;
+  transition: background .12s ease, color .12s ease, border-color .12s ease;
+}
+.mini:hover { background: var(--hover); color: var(--ink); border-color: var(--line-strong); }
+
+/* ── list ──────────────────────────────────────────────────────────── */
+.list {
+  display: flex; flex-direction: column; min-width: 0;
+  background: var(--bg);
+  border-right: 1px solid var(--line);
+}
+.list__head { padding: 12px 12px 10px; border-bottom: 1px solid var(--line-soft); }
+.field { position: relative; display: flex; align-items: center; }
+.field input {
+  width: 100%; min-height: 34px;
+  padding: 0 32px 0 11px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--ink);
+  transition: border-color .12s ease, background .12s ease;
+}
+.field input::placeholder { color: var(--faint); }
+.field input:hover { border-color: var(--line-strong); }
+.field input:focus { outline: none; border-color: var(--accent); background: var(--raised); }
+.field input::-webkit-search-cancel-button { display: none; }
+.field__clear {
+  position: absolute; right: 5px;
+  width: 24px; height: 24px; border-radius: 4px;
+  color: var(--muted); font-size: 12px;
+}
+.field__clear:hover { background: var(--hover); color: var(--ink); }
+
+.list__meta {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  margin-top: 9px;
+  font-size: 12px; color: var(--muted);
+}
+.list__meta select, .reader__tools select {
+  min-height: 28px; padding: 0 6px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  color: var(--body);
+  font-size: 12px;
+}
+
+.list__body { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 8px 8px; }
+/* The list is the primary keyboard target, so it must keep its focus ring.
+   The rule was `.list__body:focus { outline: none }`, whose specificity
+   (0,2,0) beat the global `:focus-visible` (0,1,0) and removed it entirely. */
+.list__body:focus { outline: none; }
+.list__body:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.list__foot { padding: 8px 12px 12px; border-top: 1px solid var(--line-soft); }
+
+/* One row = title, facts, and the ribbon. The ribbon is the memorable
+   element: exchange density over time, the same strip the reader's minimap
+   draws, so the shape of a conversation is legible before you open it. */
+.row {
+  display: block; width: 100%; text-align: left;
+  padding: 9px 10px 10px;
+  border-radius: 6px;
+  border-left: 2px solid transparent;
+  transition: background .1s ease;
+}
+.row:hover { background: var(--hover); }
+.row.is-on { background: var(--active); border-left-color: var(--accent); }
+.row.is-pinned .row__title::after { content: " ★"; color: var(--accent-text); }
+
+.row__top { display: flex; align-items: baseline; gap: 8px; }
+.row__title {
+  flex: 1; min-width: 0;
+  font-size: 13.5px; font-weight: 550; line-height: 1.35; color: var(--ink);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.row__when {
+  flex: none;
+  font: 400 11px/1 "Cascadia Mono", Consolas, monospace;
+  color: var(--faint); font-variant-numeric: tabular-nums;
+}
+.row__sub {
+  margin-top: 3px;
+  font-size: 12px; color: var(--muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.row__facts {
+  margin-top: 5px;
+  font: 400 11px/1.4 "Cascadia Mono", Consolas, monospace;
+  color: var(--faint); font-variant-numeric: tabular-nums;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* ribbon: 3px-tall stacked bars, one per voice */
+.ribbon { display: flex; height: 3px; margin-top: 7px; gap: 1px; border-radius: 2px; overflow: hidden; }
+.ribbon i { display: block; height: 100%; min-width: 1px; }
+.ribbon .r-you { background: var(--you-rail); }
+.ribbon .r-cl { background: var(--claude-rail); }
+.ribbon .r-ma { background: var(--machine-rail); }
+
+.hit {
+  display: block; width: 100%; text-align: left;
+  padding: 8px 10px; border-radius: 6px;
+}
+.hit:hover { background: var(--hover); }
+.hit.is-on { background: var(--active); }
+.hit__top { display: flex; align-items: baseline; gap: 8px; }
+.hit__title { flex: 1; min-width: 0; font-size: 13px; font-weight: 550; color: var(--ink);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hit__n { flex: none; font: 400 11px/1 "Cascadia Mono", Consolas, monospace; color: var(--faint); }
+.hit__snip { margin-top: 3px; font-size: 12px; color: var(--muted); line-height: 1.45;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.hit__snip mark { background: var(--accent-soft); color: var(--ink); border-radius: 2px; padding: 0 1px; }
+
+.empty { padding: 40px 18px; text-align: center; color: var(--muted); font-size: 13px; line-height: 1.6; }
+.empty strong { display: block; color: var(--ink); font-size: 14px; margin-bottom: 5px; font-weight: 600; }
+
+/* ── buttons ───────────────────────────────────────────────────────── */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  min-height: 30px; padding: 0 11px;
+  border-radius: 6px; border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--body);
+  font-size: 12.5px; font-weight: 500;
+  transition: background .12s ease, border-color .12s ease, color .12s ease;
+}
+.btn:hover { background: var(--hover); border-color: var(--line-strong); color: var(--ink); }
+.btn--ghost { background: transparent; }
+.btn--primary {
+  background: var(--accent); border-color: transparent; color: var(--on-accent); font-weight: 600;
+}
+.btn--primary:hover { background: var(--accent-hover); color: var(--on-accent); }
+.btn--wide { width: 100%; }
+.btn[disabled] { opacity: .5; pointer-events: none; }
+
+/* ── reader ────────────────────────────────────────────────────────── */
+/* Not `scroll-behavior: smooth`: three places assign scrollTop expecting it to
+   be applied synchronously (restoring position after an append, resetting on
+   open, restoring after a filter re-render). Smooth scrolling animates those,
+   so they can be clobbered mid-flight -- which is exactly the "appending moved
+   what I was reading" bug. Opt into smooth per call instead. */
+.reader { min-width: 0; overflow-y: auto; background: var(--bg); }
+.reader__empty {
+  height: 100%; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 12px;
+  padding: 40px; text-align: center;
+}
+.reader__empty h2 { font-size: 17px; font-weight: 600; color: var(--ink); }
+.reader__empty p { max-width: 42ch; font-size: 13.5px; color: var(--muted); line-height: 1.6; }
+.empty__mark {
+  width: 34px; height: 34px; border-radius: 8px;
+  background: linear-gradient(160deg, var(--accent-soft), transparent);
+  border: 1px solid var(--line);
+}
+kbd {
+  font: 500 11px/1 "Cascadia Mono", Consolas, monospace;
+  padding: 2px 5px; border: 1px solid var(--line); border-bottom-width: 2px;
+  border-radius: 4px; background: var(--surface); color: var(--body);
+}
+
+.reader__doc { padding: 0 0 96px; }
+/* The header holds the title, the facts, the tools and the turn outline.
+   Only the h1 had a measure cap, so on a wide window the rest of the header
+   spanned the full reader while the prose below was centred at 78ch -- the
+   header looked like it belonged to a different, much wider document. The
+   cap is on the children, not the header, so the sticky background and rule
+   still span the full width they need to. */
+.reader__head {
+  position: sticky; top: 0; z-index: 5;
+  padding: 20px 0 0;
+  background: var(--bg);
+  border-bottom: 1px solid var(--line-soft);
+}
+.reader__head > * { max-width: 78ch; margin-left: auto; margin-right: auto; padding: 0 32px; }
+.reader__head h1 {
+  /* The measure cap. 30ch at this size is roughly 70 characters of prose,
+     which is the readable range; without it a wide window gives 2000px
+     lines, which is the single most common reader-app failure. */
+  max-width: 68ch;
+  font: 600 21px/1.25 "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+  letter-spacing: -.015em;
+  color: var(--ink);
+}
+.reader__facts {
+  display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 9px;
+  font: 400 11.5px/1.5 "Cascadia Mono", Consolas, monospace;
+  color: var(--muted); font-variant-numeric: tabular-nums;
+}
+.reader__facts b { color: var(--body); font-weight: 600; }
+.reader__tools {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin: 14px 0 12px;
+}
+.toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--body); cursor: pointer; }
+.toggle input { accent-color: var(--accent); width: 14px; height: 14px; }
+.outline {
+  display: flex; gap: 2px; flex-wrap: wrap;
+  padding-bottom: 10px;
+}
+.outline button {
+  min-width: 22px; height: 22px; padding: 0 5px;
+  border-radius: 4px;
+  font: 500 11px/1 "Cascadia Mono", Consolas, monospace;
+  color: var(--muted); font-variant-numeric: tabular-nums;
+}
+.outline button:hover { background: var(--hover); color: var(--ink); }
+.outline button.is-on { background: var(--accent); color: var(--on-accent); }
+.outline__note {
+  align-self: center; margin-right: 8px;
+  font-size: 11px; color: var(--muted);
+}
+
+.reader__body { max-width: 78ch; margin: 0 auto; padding: 26px 32px 0; }
+.reader__foot { max-width: 78ch; margin: 0 auto; padding: 22px 32px; }
+
+/* ── messages ──────────────────────────────────────────────────────── */
+/* A 2px rail plus a gutter: the voice is identifiable while scrolling
+   without a label on every turn. */
+.msg {
+  display: grid; grid-template-columns: 3px 1fr; gap: 0 16px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--line-soft);
+  /* Lets the browser skip layout for off-screen messages; the only
+     virtualization that matters at 20k messages. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 120px;
+}
+.msg:last-child { border-bottom: 0; }
+.msg__rail { border-radius: 2px; background: var(--line); }
+/* Human turns carry a little more air than machine ones: the conversation is
+   the subject, and the traffic around it should not weigh as much. */
+.msg--user, .msg--assistant { padding: 18px 0; }
+/* The role class is msg--<role>, and the role for a human turn is "user",
+   not "you" -- so this selector matched nothing and every user message fell
+   back to the default grey rail, losing the one cue that separates the two
+   voices while scrolling. */
+.msg--user .msg__rail { background: var(--you-rail); }
+.msg--assistant .msg__rail { background: var(--claude-rail); }
+.msg--tool, .msg--result { background: var(--machine-soft); border-radius: 6px; padding: 12px 14px; }
+.msg--tool .msg__rail, .msg--result .msg__rail { background: var(--machine-rail); }
+.msg--error .tool__name { color: var(--danger); }
+.msg--error { border-left: 2px solid var(--danger); }
+.msg--thinking { opacity: .82; }
+
+.msg__head {
+  display: flex; align-items: baseline; gap: 9px; margin-bottom: 6px;
+  font-size: 11.5px;
+}
+.msg__who { font-weight: 650; letter-spacing: .01em; }
+.msg--user .msg__who { color: var(--you); }
+.msg--assistant .msg__who { color: var(--claude-rail); }
+.msg--tool .msg__who, .msg--result .msg__who { color: var(--machine); }
+.msg--thinking .msg__who { color: var(--muted); }
+.msg__meta {
+  font: 400 11px/1 "Cascadia Mono", Consolas, monospace;
+  color: var(--faint); font-variant-numeric: tabular-nums;
+}
+.msg__text {
+  /* The record is a document, so it reads like one. */
+  font: 400 15.5px/1.64 Georgia, "Iowan Old Style", "Times New Roman", serif;
+  color: var(--body);
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.msg--user .msg__text { color: var(--ink); }
+.msg__text code, .msg__text pre, .tool__body {
+  font-family: "Cascadia Mono", Consolas, "SF Mono", monospace;
+  font-size: 12.5px; line-height: 1.55;
+}
+.msg__text pre {
+  margin: 9px 0; padding: 10px 12px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 6px;
+  overflow-x: auto; white-space: pre;
+}
+.msg__text code { background: var(--surface); border-radius: 3px; padding: 1px 4px; }
+.msg__text pre code { background: none; padding: 0; }
+
+.tool__head {
+  display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
+  min-height: 22px; border-radius: 4px; padding: 0 2px; margin: -2px 0;
+  transition: background .12s ease;
+}
+.tool__head:hover { background: var(--hover); }
+.tool__name { font: 600 12.5px/1 "Cascadia Mono", Consolas, monospace; color: var(--machine); }
+.tool__label { flex: 1; min-width: 0; font-size: 12px; color: var(--muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tool__caret { color: var(--faint); font-size: 10px; transition: transform .12s ease; flex: none; }
+/* The wrapper is .msg--tool / .msg--result -- there is no .tool element, so
+   the old `.tool.is-open` selector never matched and the caret never moved. */
+.msg--tool.is-open .tool__caret,
+.msg--result.is-open .tool__caret { transform: rotate(90deg); }
+.tool__body {
+  margin-top: 9px; padding: 10px 12px;
+  background: var(--bg); border: 1px solid var(--line); border-radius: 5px;
+  color: var(--body); white-space: pre-wrap; overflow-wrap: anywhere;
+  max-height: 460px; overflow-y: auto;
+}
+.msg--thinking .msg__text { font-style: italic; color: var(--muted); font-size: 14.5px; }
+
+mark { background: var(--accent-soft); color: var(--ink); border-radius: 2px; padding: 0 2px; }
+
+/* ── status bar ────────────────────────────────────────────────────── */
+.status {
+  display: flex; align-items: center; gap: 8px;
+  padding: 0 12px;
+  background: var(--surface);
+  border-top: 1px solid var(--line);
+  font-size: 11.5px; color: var(--muted);
+}
+.status__spacer { flex: 1; }
+.status__dot { width: 6px; height: 6px; border-radius: 50%; background: var(--faint); flex: none; }
+.status__dot.is-ok { background: var(--success); }
+.status__dot.is-busy { background: var(--accent); animation: pulse 1.4s ease-in-out infinite; }
+.status__dot.is-err { background: var(--danger); }
+@keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .3 } }
+@media (prefers-reduced-motion: reduce) {
+  .status__dot.is-busy { animation: none; }
+  .reader { scroll-behavior: auto; }
+  * { transition: none !important; }
+}
+
+/* ── toast ─────────────────────────────────────────────────────────── */
+.toast {
+  position: fixed; bottom: 38px; left: 50%; transform: translateX(-50%);
+  padding: 9px 15px;
+  background: var(--raised); border: 1px solid var(--line-strong); border-radius: 7px;
+  color: var(--ink); font-size: 12.5px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / .22);
+  z-index: 40;
+}
+
+/* ── archive view ──────────────────────────────────────────────────── */
+.stats { max-width: 100%; margin: 0 auto; padding: 26px 32px 60px; }
+.stats h2 { font-size: 16px; font-weight: 600; color: var(--ink); margin-bottom: 4px; }
+.stats > p { color: var(--muted); font-size: 13px; margin-bottom: 22px; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(168px, 1fr)); gap: 1px;
+  background: var(--line); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.tile { background: var(--surface); padding: 14px 16px; }
+.tile__k { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.tile__v { margin-top: 5px; font: 600 20px/1.1 "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+  color: var(--ink); font-variant-numeric: tabular-nums; }
+.tile__note { margin-top: 3px; font-size: 11.5px; color: var(--faint); }
+.bars { margin-top: 26px; }
+.bars h3 { font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin-bottom: 10px; }
+.bar { display: grid; grid-template-columns: 150px 1fr 62px; align-items: center; gap: 10px; margin-bottom: 5px; font-size: 12.5px; }
+.bar__k { color: var(--body); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bar__t { height: 7px; background: var(--active); border-radius: 4px; }
+.bar__t i { display: block; height: 100%; background: var(--machine-rail); border-radius: 4px; }
+.bar__v { text-align: right; font: 400 11.5px/1 "Cascadia Mono", Consolas, monospace; color: var(--muted);
+  font-variant-numeric: tabular-nums; }
