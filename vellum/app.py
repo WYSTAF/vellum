@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import sys
 import threading
 import time
 from typing import Any, Iterator
@@ -23,7 +24,28 @@ from . import export, indexer, paths, settings, store
 
 app = FastAPI(title="Vellum", docs_url=None, redoc_url=None)
 
-UI_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ui")
+def _ui_dir() -> str:
+    """Locate the bundled UI, from source or from a frozen one-file build.
+
+    PyInstaller unpacks data files under ``sys._MEIPASS``, but *where* under it
+    depends on the destination given in the spec, so both layouts are tried
+    before giving up. A wrong guess here is fatal at import time -- the
+    StaticFiles mount raises -- and a frozen build has no source tree to fall
+    back on, so it is worth the two extra stat calls to fail loudly instead.
+    """
+    pkg = os.path.dirname(os.path.abspath(__file__))
+    roots = [getattr(sys, "_MEIPASS", None), pkg, os.path.dirname(pkg)]
+    for root in roots:
+        if not root:
+            continue
+        for rel in ("ui", os.path.join("vellum", "ui")):
+            candidate = os.path.join(root, rel)
+            if os.path.isfile(os.path.join(candidate, "index.html")):
+                return candidate
+    return os.path.join(pkg, "ui")
+
+
+UI_DIR = _ui_dir()
 
 
 # --------------------------------------------------------------------------

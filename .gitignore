@@ -23,3 +23,7 @@ htmlcov/
 reindex.txt
 reindex.log
 *.part
+
+# Frozen build output
+/dist/
+/build/
