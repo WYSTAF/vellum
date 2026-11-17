@@ -127,12 +127,23 @@ async function loadProjects() {
   } catch (e) { /* the list still works without the rail */ }
 }
 
+function selectProject(button) {
+  state.project = button.dataset.proj || null;
+  $$('.proj', el.projs).forEach(x => x.classList.toggle('is-on', x === button));
+  loadList();
+}
+
 el.projs.addEventListener('click', e => {
   const b = e.target.closest('.proj');
-  if (!b) return;
-  state.project = b.dataset.proj || null;
-  $$('.proj', el.projs).forEach(x => x.classList.toggle('is-on', x === b));
-  loadList();
+  if (b) selectProject(b);
+});
+
+// The "All" button in the Projects header had no handler at all: it looked
+// like a control, did nothing, and there was no way back to the full list
+// except reloading the app.
+$('#btn-projects-more').addEventListener('click', () => {
+  const all = $('.proj[data-proj=""]', el.projs);
+  if (all) selectProject(all);
 });
 
 /* ── list ─────────────────────────────────────────────────────────── */
@@ -485,8 +496,11 @@ function shortPath(p) {
 const OUTLINE_MAX = 40;
 
 function renderOutline(msgs) {
+  // m.ordinal, not the array index: messages with sidechains are filtered out
+  // of the payload, so position and ordinal disagree and the jump buttons
+  // pointed at the wrong message (or at none).
   const turns = msgs
-    .map((m, ordinal) => ({ ordinal, role: m.role }))
+    .map(m => ({ ordinal: m.ordinal, role: m.role }))
     .filter(m => m.role === 'user');
   if (turns.length < 2) { el.outline.innerHTML = ''; return; }
 
@@ -508,6 +522,9 @@ el.outline.addEventListener('click', e => {
   const b = e.target.closest('button[data-jump]');
   if (!b) return;
   $$('button', el.outline).forEach(x => x.classList.toggle('is-on', x === b));
+  // A turn past the first chunk has no element yet; render the chunks up to
+  // it before looking for it, or the button does nothing on long sessions.
+  revealToOrdinal(+b.dataset.jump);
   const t = document.getElementById('m' + b.dataset.jump);
   if (t) { t.scrollIntoView({ block: 'center', behavior: 'smooth' }); flash(t); }
 });
@@ -640,8 +657,9 @@ el.btnPin.addEventListener('click', async () => {
 async function loadPinned() {
   el.list.innerHTML = '<div class="empty">Loading…</div>';
   try {
-    const { sessions } = await api('/api/sessions?limit=1000');
-    const pins = sessions.filter(s => s.pinned);
+    // Filtered server-side: pinned conversations outside the most recent
+    // 1,000 were silently missing from this view.
+    const { sessions: pins } = await api('/api/sessions?pinned=true&limit=1000');
     el.cPinned.textContent = nfmt(pins.length);
     el.list.innerHTML = pins.length
       ? pins.map(rowHtml).join('')
@@ -738,6 +756,9 @@ document.addEventListener('keydown', e => {
     return;
   }
   if (typing) return;
+  // Ctrl+F must stay the browser's find (and Ctrl+P print, and so on); the
+  // bare-letter shortcuts only apply on their own.
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
   if (e.key === 'f' || e.key === 'F5') { e.preventDefault(); rescan(e.shiftKey); return; }
   if (e.key === 't') { applyTheme(state.theme === 'dark' ? 'light' : 'dark'); return; }
   if (e.key === 'p' && state.open) { el.btnPin.click(); return; }

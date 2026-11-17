@@ -182,10 +182,23 @@ vellum/
   app.py         HTTP layer
   launcher.py    window, or browser fallback
   ui/            index.html · app.js · css/
-tests/           31 tests, each pinning a bug found on real data
+tests/           34 tests, each pinning a bug found on real data
 ```
 
 Run the tests with `python -m pytest tests/ -q`.
+
+To build the Windows executable:
+
+```
+python -m pip install pyinstaller pillow pywebview
+python tools/make_icon.py assets
+python -m PyInstaller packaging/vellum.spec --noconfirm
+```
+
+The icon is a build input, so it has to exist before the spec runs. The
+result is `dist/Vellum.exe`; it is a windowed build, so startup failures are
+written to `~/.vellum/vellum.log` rather than to a console that does not
+exist.
 
 ---
 

@@ -159,18 +159,25 @@ def db() -> Iterator[sqlite3.Connection]:
 @app.get("/api/sessions")
 def api_sessions(
     project: str | None = None,
+    pinned: bool | None = None,
     sort: str = "recent",
     limit: int = Query(200, le=1000),
     offset: int = 0,
     con: sqlite3.Connection = Depends(db),
 ) -> dict:
     rows = store.list_sessions(
-        con, project=project, sort=sort, limit=limit, offset=offset
+        con, project=project, pinned=pinned, sort=sort,
+        limit=limit, offset=offset,
     )
+    where, args = ["is_fork = 0"], []
+    if project:
+        where.append("project = ?")
+        args.append(project)
+    if pinned is not None:
+        where.append("pinned = ?")
+        args.append(int(pinned))
     total = con.execute(
-        "SELECT COUNT(*) n FROM sessions WHERE is_fork=0"
-        + (" AND project=?" if project else ""),
-        (project,) if project else (),
+        f"SELECT COUNT(*) n FROM sessions WHERE {' AND '.join(where)}", args
     ).fetchone()["n"]
     return {"total": total, "sessions": [dict(r) for r in rows]}
 
@@ -204,10 +211,10 @@ def api_messages(
     con: sqlite3.Connection = Depends(db),
 ) -> dict:
     """Paged message fetch. The reader never holds a 10 MB transcript."""
-    total = len(store.messages(
+    total = store.count_messages(
         con, session_id,
         include_thinking=include_thinking, include_tools=include_tools,
-    ))
+    )
     rows = store.messages(
         con, session_id, limit=limit, offset=offset,
         include_thinking=include_thinking, include_tools=include_tools,

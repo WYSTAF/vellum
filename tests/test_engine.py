@@ -279,6 +279,34 @@ def test_short_query_falls_back_instead_of_erroring():
     con.close()
 
 
+def test_search_filters_by_role():
+    """A role filter used to raise "no such column: f.role".
+
+    The candidate query aliased the FTS table and the snippet pass did not,
+    but both used a clause written against the alias. The first stage was
+    correct; the second crashed for every role-filtered search.
+    """
+    tmp = tempfile.mkdtemp()
+    con = indexed_db(tmp)
+    hits = store.search(con, "coral", role="assistant")
+    assert len(hits) == 1
+    assert hits[0]["role"] == "assistant"
+    assert store.search(con, "coral", role="user") == []
+    con.close()
+
+
+def test_pinned_filter():
+    """The Pinned view asked for the 1,000 most recent sessions and filtered
+    in the browser, so an older pin was invisible. The filter is now SQL."""
+    tmp = tempfile.mkdtemp()
+    con = indexed_db(tmp)
+    ids = [r["id"] for r in store.list_sessions(con, limit=10)]
+    store.set_pinned(con, ids[0], True)
+    assert [r["id"] for r in store.list_sessions(con, pinned=True)] == [ids[0]]
+    assert ids[0] not in [r["id"] for r in store.list_sessions(con, pinned=False)]
+    con.close()
+
+
 def test_search_query_injection_is_inert():
     tmp = tempfile.mkdtemp()
     con = indexed_db(tmp)
@@ -433,6 +461,39 @@ def test_read_endpoints_close_their_connection():
     # If the generator dependency is wired up, the fixture index was never
     # needed and every one of those calls opened and closed cleanly.
     assert callable(app)
+
+
+def test_server_starts_without_stdio():
+    """The windowed exe has sys.stdout and sys.stderr set to None.
+
+    uvicorn's default log formatter calls sys.stdout.isatty(), which raised
+    AttributeError *during configuration*: the server thread died before it
+    bound, the launcher waited 15 s for a port that was never going to open,
+    and the exe exited without a window and without a message. This is the
+    "exe does not run" bug, so it gets a test that runs the real server.
+    """
+    import socket as socket_mod
+    import threading
+    import time
+
+    from vellum import launcher
+
+    port = launcher.free_port()
+    old = sys.stdout, sys.stderr
+    sys.stdout = sys.stderr = None
+    try:
+        threading.Thread(target=launcher._serve, args=(port,), daemon=True).start()
+        deadline = time.time() + 10
+        ready = False
+        while time.time() < deadline:
+            with socket_mod.socket() as s:
+                if s.connect_ex((launcher.HOST, port)) == 0:
+                    ready = True
+                    break
+            time.sleep(0.05)
+    finally:
+        sys.stdout, sys.stderr = old
+    assert ready, "server must start with no stdio (windowed build)"
 
 
 def test_unknown_session_is_a_404_not_a_500():

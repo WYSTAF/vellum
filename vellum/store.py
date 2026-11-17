@@ -412,6 +412,7 @@ def list_sessions(
     con: sqlite3.Connection,
     *,
     project: str | None = None,
+    pinned: bool | None = None,
     include_forks: bool = False,
     sort: str = "recent",
     limit: int = 500,
@@ -421,6 +422,9 @@ def list_sessions(
     if project:
         where.append("project = ?")
         args.append(project)
+    if pinned is not None:
+        where.append("pinned = ?")
+        args.append(int(pinned))
     if not include_forks:
         where.append("is_fork = 0")
     sql = "SELECT * FROM sessions"
@@ -461,6 +465,29 @@ def messages(
         sql += " LIMIT ? OFFSET ?"
         args += [limit, offset]
     return con.execute(sql, args).fetchall()
+
+
+def count_messages(
+    con: sqlite3.Connection,
+    session_id: str,
+    *,
+    include_thinking: bool = True,
+    include_tools: bool = True,
+) -> int:
+    """COUNT(*) with the same filters as :func:`messages`.
+
+    The paged endpoint used to call ``messages()`` without a limit just to
+    take its length -- building every row of a 3,000-message transcript to
+    fetch 250 of them.
+    """
+    where, args = ["session_id = ?", "sidechain = 0"], [session_id]
+    if not include_thinking:
+        where.append("role != 'thinking'")
+    if not include_tools:
+        where.append("role NOT IN ('tool','result')")
+    return con.execute(
+        f"SELECT COUNT(*) FROM messages WHERE {' AND '.join(where)}", args
+    ).fetchone()[0]
 
 
 def projects(con: sqlite3.Connection) -> list[sqlite3.Row]:
@@ -616,6 +643,9 @@ def search(
 
     match = _fts_query(q)
     role_clause = " AND f.role = ?" if role else ""
+    # The snippet pass does not alias the FTS table (MATCH and snippet() only
+    # accept the real table name), so it gets the clause qualified in full.
+    role_clause_snips = " AND msg_fts.role = ?" if role else ""
     # Two stages, and the first has to be per *conversation*, not per message.
     # Ranking messages and grouping afterwards meant one chatty conversation
     # filled the whole candidate window: measured on this archive, "the"
@@ -674,7 +704,8 @@ def search(
                        snippet(msg_fts, 0, char(2), char(3), '?', 14) AS snip,
                        rank
                 FROM msg_fts
-                WHERE session_id IN ({placeholders}) AND msg_fts MATCH ?{role_clause}
+                WHERE session_id IN ({placeholders})
+                  AND msg_fts MATCH ?{role_clause_snips}
                 ORDER BY session_id, rank""",
             ids + [match] + ([role] if role else []),
         ):
