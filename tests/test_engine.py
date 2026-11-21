@@ -121,6 +121,32 @@ def test_fingerprint_changes_when_content_changes():
     assert store.session_fingerprint(a) != store.session_fingerprint(b)
 
 
+def test_schema_rebuild_preserves_pins():
+    """A version bump rebuilds the index from the JSONL; pins and read marks
+    are the only user state in it and must survive that rebuild."""
+    from vellum import indexer
+    tmp = tempfile.mkdtemp()
+    root = build_corpus(tmp)
+    db = os.path.join(tmp, "i.db")
+    con = store.open_db(db)
+    indexer.scan(con, root)
+    sid = con.execute("SELECT id FROM sessions WHERE is_fork=0").fetchone()[0]
+    store.set_pinned(con, sid, True)
+    store.set_read(con, sid, True)
+    con.execute("UPDATE meta SET v='1' WHERE k='schema_version'")
+    con.commit()
+    con.close()
+
+    con = store.open_db(db)                      # migration drops the tables
+    assert con.execute("SELECT COUNT(*) FROM sessions").fetchone()[0] == 0
+    indexer.scan(con, root)                      # re-index + restore
+    row = con.execute(
+        "SELECT pinned, read_state FROM sessions WHERE id=?", (sid,)
+    ).fetchone()
+    assert (row["pinned"], row["read_state"]) == (1, 1)
+    con.close()
+
+
 def test_rescan_indexes_nothing():
     """A rescan of an unchanged archive is a metadata pass."""
     from vellum import indexer
@@ -224,6 +250,56 @@ def test_full_token_accounting():
         assert ps.messages[0].cache_tok == 1600, "read + creation both count as cache"
 
 
+def _assistant(content, usage=None, uuid="a", ts="2026-01-01T00:00:01Z"):
+    return {"type": "assistant", "uuid": uuid, "timestamp": ts,
+            "message": {"role": "assistant", "model": "m",
+                        "usage": usage or {}, "content": content}}
+
+
+def test_token_accounting_is_per_record_not_per_text_block():
+    """69% of assistant records on the real archive have usage but no text
+    block (tool-only turns). Tying the counters to the first text block -- and
+    gating cache accumulation on it -- dropped every one of those turns."""
+    usage = {"input_tokens": 100, "output_tokens": 50,
+             "cache_read_input_tokens": 900, "cache_creation_input_tokens": 700,
+             "output_tokens_details": {"thinking_tokens": 30}}
+    tool = {"type": "tool_use", "id": "t", "name": "Bash", "input": {"command": "ls"}}
+    with tempfile.TemporaryDirectory() as tmp:
+        ps = parser.parse_file(write_jsonl(os.path.join(tmp, "p", "s1.jsonl"),
+                                           [_assistant([tool], usage)]))
+        assert (ps.in_tok, ps.out_tok, ps.cache_read, ps.cache_create, ps.thinking_tok) \
+            == (100, 50, 900, 700, 30), "a tool-only turn must keep its full usage"
+
+        ps = parser.parse_file(write_jsonl(os.path.join(tmp, "p", "s2.jsonl"),
+                                           [_assistant([tool, {"type": "text", "text": "done"}], usage)]))
+        assert (ps.in_tok, ps.out_tok, ps.cache_read, ps.cache_create) == (100, 50, 900, 700)
+
+        ps = parser.parse_file(write_jsonl(os.path.join(tmp, "p", "s3.jsonl"),
+                                           [_assistant([{"type": "thinking", "thinking": "hmm"},
+                                                        {"type": "text", "text": "ok"}], usage)]))
+        assert ps.in_tok == 100 and ps.cache_create == 700, "thinking-first turn keeps usage"
+
+        tool2 = {"type": "tool_use", "id": "t2", "name": "Read", "input": {"file_path": "/x"}}
+        ps = parser.parse_file(write_jsonl(os.path.join(tmp, "p", "s4.jsonl"),
+                                           [_assistant([tool, tool2], usage)]))
+        assert (ps.in_tok, ps.out_tok) == (100, 50), "parallel calls must not double-count the turn"
+
+
+def test_mixed_timezone_timestamps_keep_the_session():
+    """Subtracting a naive stamp from an aware one raised TypeError, which
+    escaped parse_file (OSError-only) and cost the whole conversation."""
+    with tempfile.TemporaryDirectory() as tmp:
+        p = write_jsonl(os.path.join(tmp, "p", "s.jsonl"), [
+            {"type": "user", "uuid": "u", "timestamp": "2026-01-01T00:00:00",
+             "message": {"role": "user", "content": "hi"}},
+            {"type": "assistant", "uuid": "a", "timestamp": "2026-01-01T00:00:05Z",
+             "message": {"role": "assistant", "content": [{"type": "text", "text": "yo"}]}},
+        ])
+        ps = parser.parse_file(p)
+        assert ps is not None
+        assert ps.duration_s == 5.0
+
+
 # --------------------------------------------------------------------------
 # Search
 # --------------------------------------------------------------------------
@@ -304,6 +380,26 @@ def test_pinned_filter():
     store.set_pinned(con, ids[0], True)
     assert [r["id"] for r in store.list_sessions(con, pinned=True)] == [ids[0]]
     assert ids[0] not in [r["id"] for r in store.list_sessions(con, pinned=False)]
+    con.close()
+
+
+def test_sidechain_messages_are_not_searchable():
+    """Search must not surface a hit the reader is unable to open: sidechain
+    rows are hidden from the reader and duplicated in the sub-agent session."""
+    tmp = tempfile.mkdtemp()
+    root = os.path.join(tmp, "projects", "p")
+    os.makedirs(root)
+    write_jsonl(os.path.join(root, "s1.jsonl"), [
+        _record(n=1, type="user", message={"role": "user", "content": "public apple"}),
+        _record(n=2, type="assistant", isSidechain=True, message={
+            "role": "assistant", "content": [{"type": "text", "text": "hidden banana"}]}),
+    ])
+    con = store.open_db(os.path.join(tmp, "i.db"))
+    from vellum import indexer
+    indexer.scan(con, os.path.join(tmp, "projects"))
+    assert store.search(con, "banana") == [], "sidechain text must not be searchable"
+    assert len(store.search(con, "apple")) == 1
+    assert all(not m["sidechain"] for m in store.messages(con, "s1"))
     con.close()
 
 
@@ -441,6 +537,33 @@ def test_role_colours_are_distinguishable():
         assert len({t["you"], t["claude"], t["machine"]}) == 3
 
 
+def test_every_text_colour_token_clears_aa():
+    """The audit's PAIRS list is only as good as its coverage.
+
+    --faint was generated at the 3.0 non-text threshold but used exclusively
+    as text, and --claude-rail (a rail colour) was used for the assistant
+    label; both failed AA in both themes while the audit reported "all pass"
+    because neither token was in PAIRS. This gate reads the tokens the CSS
+    actually paints as text and checks each one directly.
+    """
+    import re
+    from pathlib import Path
+
+    css = (Path(__file__).resolve().parent.parent
+           / "vellum" / "ui" / "css" / "app.css").read_text(encoding="utf-8")
+    tokens = set(re.findall(r"(?:^|[;{\s])color:\s*var\(--([a-z-]+)\)", css))
+    assert tokens, "expected to find text colour declarations in app.css"
+    for theme in ("light", "dark"):
+        t = palette.build(theme)
+        for tok in tokens:
+            key = tok.replace("-", "_")
+            if key == "on_accent":  # painted on --accent, audited in PAIRS
+                continue
+            for bg in ("bg", "surface", "raised"):
+                ratio = palette.wcag_ratio(t[key], t[bg])
+                assert ratio >= 4.5, f"{theme}: text token --{tok} on {bg} = {ratio:.2f}:1"
+
+
 # --------------------------------------------------------------------------
 # HTTP layer
 # --------------------------------------------------------------------------
@@ -503,6 +626,56 @@ def test_unknown_session_is_a_404_not_a_500():
     with TestClient(app) as client:
         r = client.get("/api/session/does-not-exist")
         assert r.status_code == 404, r.text
+
+
+def test_status_closes_its_connection_when_stats_fail(tmp_path, monkeypatch):
+    """A corrupt index made stats_line raise after the connection was opened;
+    the close sat after the call, so every 1.2 s status poll leaked a handle."""
+    from vellum import app, indexer, settings, store
+
+    db = tmp_path / "index.db"
+    db.write_text("")
+    monkeypatch.setattr(settings, "index_path", lambda: str(db))
+    closed = []
+
+    class FakeCon:
+        def close(self):
+            closed.append(True)
+
+    monkeypatch.setattr(store, "connect", lambda *a, **k: FakeCon())
+
+    def boom(*a, **k):
+        raise RuntimeError("corrupt index")
+
+    monkeypatch.setattr(indexer, "stats_line", boom)
+    snap = app.api_status()
+    assert snap["indexed"] is True
+    assert closed == [True], "connection leaked when stats_line raised"
+
+
+def test_session_meta_only_and_message_paging(tmp_path, monkeypatch):
+    """The reader pages the body, so /api/session must serve meta without the
+    transcript, plus the full turn outline and a total to page against."""
+    from fastapi.testclient import TestClient
+    from vellum import app, indexer, settings, store
+
+    root = build_corpus(str(tmp_path))
+    con = store.open_db(str(tmp_path / "i.db"))
+    indexer.scan(con, root)
+    sid = con.execute("SELECT id FROM sessions WHERE is_fork=0").fetchone()[0]
+    total = store.count_messages(con, sid)
+    con.close()
+    monkeypatch.setattr(settings, "index_path", lambda: str(tmp_path / "i.db"))
+
+    with TestClient(app.app) as client:
+        meta = client.get(f"/api/session/{sid}?include_messages=false").json()
+        assert "messages" not in meta
+        assert meta["message_total"] == total
+        assert meta["turns"] and all(isinstance(o, int) for o in meta["turns"])
+        full = client.get(f"/api/session/{sid}").json()
+        assert len(full["messages"]) == total
+        page = client.get(f"/api/messages/{sid}?offset=0&limit=2").json()
+        assert page["total"] == total and len(page["messages"]) == 2
 
 
 def test_concurrent_index_requests_start_only_one_scan():

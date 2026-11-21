@@ -20,7 +20,7 @@
   --ink: #1B1A17;
   --body: #464038;
   --muted: #645C51;
-  --faint: #817769;
+  --faint: #645C51;
   --disabled: #B9AC98;
   --on-accent: #141413;
 
@@ -38,12 +38,12 @@
 
   /* -- voices: the only hues that name a speaker -- */
   --you: #7F5227;
-  --you-rail: #E99A4E;
+  --you-rail: #C88442;
   --you-soft: #FCEFE5;
   --claude: #1B1A17;
   --claude-rail: #989288;
   --machine: #4C616E;
-  --machine-rail: #B0C8D7;
+  --machine-rail: #637D8D;
   --machine-soft: #EDF3F6;
   --thinking: #645C51;
 
@@ -75,7 +75,7 @@
   --ink: #F5F4F0;
   --body: #DCCFBB;
   --muted: #BFAF97;
-  --faint: #9E907C;
+  --faint: #BFAF97;
   --disabled: #645B4D;
   --on-accent: #141413;
 
@@ -93,12 +93,12 @@
 
   /* -- voices: the only hues that name a speaker -- */
   --you: #EE9C4C;
-  --you-rail: #7E5024;
+  --you-rail: #9E6630;
   --you-soft: #331D09;
   --claude: #F5F4F0;
   --claude-rail: #8A857B;
   --machine: #93B7CC;
-  --machine-rail: #3A4C57;
+  --machine-rail: #5E7989;
   --machine-soft: #1A242B;
   --thinking: #BFAF97;
 

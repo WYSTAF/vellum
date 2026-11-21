@@ -95,6 +95,7 @@ def scan(
     total = len(todo)
     if not total:
         store._resolve_forks(con)
+        store.restore_preserved_state(con)
         con.commit()
         counters["elapsed"] = time.time() - t0
         return counters
@@ -163,6 +164,7 @@ def scan(
     # Fork resolution needs the whole pass. It is a few UPDATE statements
     # over 378 rows, so doing it once at the end costs nothing.
     store._resolve_forks(con)
+    store.restore_preserved_state(con)
     con.commit()
     con.execute("PRAGMA wal_checkpoint(TRUNCATE)")
     counters["elapsed"] = time.time() - t0

@@ -45,7 +45,10 @@ import threading
 import time
 from typing import Any, Callable, Iterable
 
-SCHEMA_VERSION = 5
+# 6: token accounting moved from "first text block" to per assistant record.
+# Existing indexes carry understated totals with no way to tell by looking, so
+# an upgrade rebuilds on the next scan rather than showing wrong numbers.
+SCHEMA_VERSION = 6
 
 # Bookkeeping records. These carry no conversation content; dropping them
 # silently is correct and keeps the reader clean.
@@ -183,11 +186,50 @@ def _migrate(con: sqlite3.Connection) -> None:
     elif int(row["v"]) != SCHEMA_VERSION:
         # The layout changed; a partial migration is worse than a rebuild, and
         # the rebuild is cheap because the source is the JSONL, not this file.
+        # Pins and read marks are the only user state in the index, so they
+        # are snapshotted into meta (which is not dropped) and reapplied once
+        # the re-index has written the sessions back.
+        try:
+            keep = {
+                r["id"]: [r["pinned"], r["read_state"]]
+                for r in con.execute(
+                    "SELECT id, pinned, read_state FROM sessions "
+                    "WHERE pinned=1 OR read_state=1"
+                )
+            }
+        except sqlite3.OperationalError:
+            keep = {}
+        if keep:
+            con.execute(
+                "INSERT OR REPLACE INTO meta(k,v) VALUES('preserved_state',?)",
+                (json.dumps(keep),),
+            )
         for table in ("msg_fts", "tool_freq", "messages", "sessions"):
             con.execute(f"DROP TABLE IF EXISTS {table}")
         con.executescript(SCHEMA)
         con.execute("UPDATE meta SET v=? WHERE k='schema_version'", (str(SCHEMA_VERSION),))
     con.commit()
+
+
+def restore_preserved_state(con: sqlite3.Connection) -> None:
+    """Reapply pins and read marks saved before a schema rebuild."""
+    row = con.execute("SELECT v FROM meta WHERE k='preserved_state'").fetchone()
+    if row is None:
+        return
+    try:
+        keep = json.loads(row["v"])
+    except (TypeError, ValueError):
+        keep = {}
+    for sid, state in keep.items():
+        try:
+            pinned, read = state
+        except (TypeError, ValueError):
+            continue
+        con.execute(
+            "UPDATE sessions SET pinned=?, read_state=? WHERE id=?",
+            (int(pinned), int(read), sid),
+        )
+    con.execute("DELETE FROM meta WHERE k='preserved_state'")
 
 
 # --------------------------------------------------------------------------
@@ -365,7 +407,11 @@ def _put_session(con: sqlite3.Connection, ps: Any, *, fts: bool = True) -> None:
         # finds both the call and what it printed.
         if m.tool and m.role in ("tool", "result"):
             tool_counts[m.tool] = tool_counts.get(m.tool, 0) + 1
-        if fts and m.role in FTS_ROLES:
+        # Sidechain messages are the sub-agent's transcript copied into the
+        # parent. They are readable (and searchable) through their own session
+        # row, and the reader never returns them -- indexing them here made
+        # search offer hits whose ordinal could not be opened or jumped to.
+        if fts and m.role in FTS_ROLES and not m.sidechain:
             # Tool payloads are stored verbatim in `messages` for the reader,
             # but only a prefix goes into FTS. Measured on this archive,
             # indexing all of them costs ~800 MB of duplicate text; a 2,000

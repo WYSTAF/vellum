@@ -7,8 +7,10 @@ foreground    background   WCAG    APCA   verdict
 ink           bg         17.40:  107.0   ok
 body          bg         10.24:   96.5   ok
 muted         bg          6.58:   85.3   ok
+faint         bg          6.58:   85.3   ok
 body          surface     9.72:   92.9   ok
 muted         surface     6.25:   81.7   ok
+faint         surface     6.25:   81.7   ok
 body          raised      8.81:   86.3   ok
 muted         raised      5.66:   75.1   ok
 ink           raised     14.98:   96.8   ok
@@ -22,6 +24,10 @@ machine       raised      5.58:   74.6   ok
 claude        bg         17.40:  107.0   ok
 danger        bg         10.60:   96.7   ok
 success       bg          6.69:   85.5   ok
+you_rail      bg          3.07:   60.1   ok
+claude_rail   bg          3.09:   60.5   ok
+machine_rail  bg          4.33:   72.7   ok
+machine_rail  machine_soft  3.87:   64.9   ok
 
 All pairs pass WCAG AA.
 
@@ -36,8 +42,10 @@ foreground    background   WCAG    APCA   verdict
 ink           bg         13.78: -100.2   ok
 body          bg          9.88:  -78.0   ok
 muted         bg          7.07:  -59.8   ok
+faint         bg          7.07:  -59.8   ok
 body          surface     8.62:  -76.0   ok
 muted         surface     6.17:  -57.7   ok
+faint         surface     6.17:  -57.7   ok
 body          raised      7.52:  -73.5   ok
 muted         raised      5.38:  -55.2   ok
 ink           raised     10.48:  -95.7   ok
@@ -51,6 +59,10 @@ machine       raised      5.43:  -55.7   ok
 claude        bg         13.78: -100.2   ok
 danger        bg          6.75:  -57.8   ok
 success       bg          4.72:  -42.2   ok
+you_rail      bg          3.17:  -28.4   low APCA
+claude_rail   bg          4.13:  -37.0   ok
+machine_rail  bg          3.30:  -29.4   low APCA
+machine_rail  machine_soft  3.43:  -29.9   low APCA
 
 All pairs pass WCAG AA.
 

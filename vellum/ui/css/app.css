@@ -381,7 +381,10 @@ kbd {
 }
 .msg__who { font-weight: 650; letter-spacing: .01em; }
 .msg--user .msg__who { color: var(--you); }
-.msg--assistant .msg__who { color: var(--claude-rail); }
+/* The speaker label is text, so it needs an audited 4.5:1 token. --claude-rail
+   is a 2px rail colour (3:1 non-text) and fails AA as a label in both themes;
+   muted keeps Claude quiet and legible. The rail itself still uses claude-rail. */
+.msg--assistant .msg__who { color: var(--muted); }
 .msg--tool .msg__who, .msg--result .msg__who { color: var(--machine); }
 .msg--thinking .msg__who { color: var(--muted); }
 .msg__meta {

@@ -36,7 +36,7 @@ const state = {
   hits: [],
   includeTools: true, includeThinking: false,
   theme: localStorage.getItem('vellum.theme') || 'dark',
-  msgs: [], msgTotal: 0, chunk: 0,
+  msgs: [], msgTotal: 0, loaded: 0, chunk: 0,
   filterNote: '', indexSize: 0,
 };
 
@@ -378,11 +378,14 @@ async function openSession(id, jumpTo) {
   el.outline.innerHTML = '';
 
   try {
-    const d = await api('/api/session/' + encodeURIComponent(id));
+    // Meta only: the body is paged in below. Fetching the whole transcript
+    // here held a 10 MB conversation in memory and defeated the chunking.
+    const d = await api('/api/session/' + encodeURIComponent(id) + '?include_messages=false');
     if (state.open !== id) return;              // superseded
     const s = d.session;
-    state.msgs = d.messages || [];
-    state.msgTotal = state.msgs.length;
+    state.msgs = [];
+    state.loaded = 0;
+    state.msgTotal = d.message_total || 0;
     state.chunk = 0;
     state.pinned = !!s.pinned;
     el.btnPin.textContent = state.pinned ? '★' : '☆';
@@ -398,12 +401,15 @@ async function openSession(id, jumpTo) {
       `<span>${bytes(s.bytes)}</span>`,
       d.forks && d.forks.length ? `<span>rewound ×${d.forks.length}</span>` : '',
     ].filter(Boolean).join('');
+    await loadNextPage();
+    if (state.open !== id) return;
     renderChunk();
-    renderOutline(state.msgs);
+    renderOutline(d.turns || []);
     el.reader.scrollTop = 0;
     if (jumpTo) {
-      // A hit may sit past the first chunk; reveal chunks until it exists.
-      revealToOrdinal(jumpTo);
+      // A hit may sit past the loaded pages; page in and reveal up to it.
+      await revealToOrdinal(jumpTo);
+      if (state.open !== id) return;
       const target = document.getElementById('m' + jumpTo);
       if (target) { target.scrollIntoView({ block: 'center', behavior: 'smooth' }); flash(target); }
     }
@@ -426,6 +432,23 @@ async function openSession(id, jumpTo) {
    appends on demand; `content-visibility` on each message keeps the rest
    cheap once they are in the tree. */
 const CHUNK = 250;
+// Raw messages fetched per round trip. Larger than CHUNK because the Tools /
+// Thinking filters can hide most of a page; 500 keeps round trips rare without
+// pulling a whole transcript.
+const PAGE = 500;
+
+async function loadNextPage() {
+  if (state.loaded >= state.msgTotal) return;
+  const id = state.open;
+  const params = new URLSearchParams({
+    offset: state.loaded, limit: PAGE,
+    include_thinking: true, include_tools: true,
+  });
+  const d = await api('/api/messages/' + encodeURIComponent(id) + '?' + params);
+  if (state.open !== id) return;   // a newer conversation won; drop this page
+  state.msgs = state.msgs.concat(d.messages);
+  state.loaded = state.msgs.length;
+}
 
 function visibleMessages() {
   return state.msgs.filter(showMessage);
@@ -450,29 +473,49 @@ function renderChunk(append = false) {
 }
 
 function renderMore() {
-  const total = visibleMessages().length;
-  const shown = Math.min((state.chunk + 1) * CHUNK, total);
-  if (shown >= total) {
+  const visible = visibleMessages().length;
+  const shown = Math.min((state.chunk + 1) * CHUNK, visible);
+  if (shown < visible) {
+    // More loaded messages than are rendered: reveal the next chunk.
+    el.foot.innerHTML = `<div style="text-align:center">
+      <button class="btn btn--wide" id="btn-more-msgs">
+        Show more · ${nfmt(visible - shown)} remaining</button></div>`;
+  } else if (state.loaded < state.msgTotal) {
+    // Everything loaded is rendered, but the conversation continues on disk.
+    el.foot.innerHTML = `<div style="text-align:center">
+      <button class="btn btn--wide" id="btn-more-msgs">
+        Load more · ${nfmt(state.msgTotal - state.loaded)} messages left</button></div>`;
+  } else {
     el.foot.innerHTML = `<div class="empty" style="padding:18px">
       End of conversation · ${nfmt(state.msgTotal)} messages</div>`;
-    return;
   }
-  el.foot.innerHTML = `<div style="text-align:center">
-    <button class="btn btn--wide" id="btn-more-msgs">
-      Show more · ${nfmt(total - shown)} remaining</button></div>`;
 }
 
-el.foot.addEventListener('click', e => {
+el.foot.addEventListener('click', async e => {
   if (!e.target.closest('#btn-more-msgs')) return;
   const keep = el.reader.scrollTop;
+  const id = state.open;
+  // Page in until the next chunk has something to render (filters may hide a
+  // whole page of tool traffic), then reveal it.
+  while (visibleMessages().length <= (state.chunk + 1) * CHUNK
+         && state.loaded < state.msgTotal) {
+    await loadNextPage();
+    if (state.open !== id) return;
+  }
   state.chunk++;
   renderChunk(true);
   el.reader.scrollTop = keep;   // appending must not move what you were reading
 });
 
-function revealToOrdinal(ordinal) {
-  // Chunk over the *filtered* list, so a search hit in a tool-heavy turn is
-  // reached by the same arithmetic that rendered it.
+async function revealToOrdinal(ordinal) {
+  // Page in until the target message is loaded, then chunk over the *filtered*
+  // list so a hit in a tool-heavy turn is reached by the same arithmetic that
+  // rendered it.
+  const id = state.open;
+  while (!state.msgs.some(m => m.ordinal === ordinal) && state.loaded < state.msgTotal) {
+    await loadNextPage();
+    if (state.open !== id) return;
+  }
   const filtered = visibleMessages();
   const idx = filtered.findIndex(m => m.ordinal === ordinal);
   if (idx < 0) return;
@@ -495,14 +538,10 @@ function shortPath(p) {
    threshold it samples evenly and says so. */
 const OUTLINE_MAX = 40;
 
-function renderOutline(msgs) {
-  // m.ordinal, not the array index: messages with sidechains are filtered out
-  // of the payload, so position and ordinal disagree and the jump buttons
-  // pointed at the wrong message (or at none).
-  const turns = msgs
-    .map(m => ({ ordinal: m.ordinal, role: m.role }))
-    .filter(m => m.role === 'user');
-  if (turns.length < 2) { el.outline.innerHTML = ''; return; }
+function renderOutline(turns) {
+  // turns is the full list of user-turn ordinals from the server, so the
+  // outline spans the whole conversation even though the body is paged in.
+  if (!turns || turns.length < 2) { el.outline.innerHTML = ''; return; }
 
   const sampled = turns.length <= OUTLINE_MAX
     ? turns
@@ -514,17 +553,16 @@ function renderOutline(msgs) {
     : `<span class="outline__note">${nfmt(turns.length)} turns</span>`;
 
   el.outline.innerHTML = note + sampled
-    .map((j, k) => `<button data-jump="${j.ordinal}" title="Turn ${k + 1}">${k + 1}</button>`)
+    .map((ord, k) => `<button data-jump="${ord}" title="Turn ${k + 1}">${k + 1}</button>`)
     .join('');
 }
 
-el.outline.addEventListener('click', e => {
+el.outline.addEventListener('click', async e => {
   const b = e.target.closest('button[data-jump]');
   if (!b) return;
   $$('button', el.outline).forEach(x => x.classList.toggle('is-on', x === b));
-  // A turn past the first chunk has no element yet; render the chunks up to
-  // it before looking for it, or the button does nothing on long sessions.
-  revealToOrdinal(+b.dataset.jump);
+  // A far turn is not loaded yet: page in and reveal up to it before scrolling.
+  await revealToOrdinal(+b.dataset.jump);
   const t = document.getElementById('m' + b.dataset.jump);
   if (t) { t.scrollIntoView({ block: 'center', behavior: 'smooth' }); flash(t); }
 });
@@ -558,11 +596,15 @@ function reRenderKeepingScroll() {
   // Count what is actually on screen, not what passes the filter across the
   // whole session -- otherwise this claims 750 of 1000 messages while 250
   // are rendered and the rest sit behind "Show more".
-  const rendered = $$('.msg', el.body).length;
   const passing = visibleMessages().length;
-  state.filterNote = passing === state.msgTotal
+  // With paged loading, "of the whole conversation" is unknown until every
+  // page is in; report against what is actually loaded, and say how much is
+  // still on disk.
+  const onDisk = state.msgTotal - state.loaded;
+  state.filterNote = passing === state.loaded
     ? ''
-    : `showing ${nfmt(passing)} of ${nfmt(state.msgTotal)} messages (${nfmt(rendered)} loaded)`;
+    : `showing ${nfmt(passing)} of ${nfmt(state.loaded)} loaded`
+      + (onDisk > 0 ? ` · ${nfmt(onDisk)} more on disk` : '');
   paintStatusRight();
 }
 
@@ -735,6 +777,12 @@ async function pollStatus() {
       state._loaded = true;
       await loadProjects();
       if (state.view === 'library' && !state.q) loadList();
+      // The rail's Pinned badge read 0 until you visited the Pinned view, even
+      // when pins existed. Seed it from the server-side count once.
+      api('/api/sessions?pinned=true&limit=1').then(d => {
+        state.pinnedCount = d.total;
+        el.cPinned.textContent = nfmt(d.total);
+      }).catch(() => {});
     }
   } catch (e) { setStatus('Waiting for the server…', ''); }
 }

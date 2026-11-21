@@ -323,6 +323,10 @@ class ParsedSession:
     duration_s: float = 0.0
 
     def finalize(self) -> "ParsedSession":
+        # Token totals are accumulated per API record in _consume, not summed
+        # from messages here: a record's usage is independent of how many
+        # blocks it emits (or whether it emits any), so summing message rows
+        # both double-counted parallel tool calls and lost tool-only turns.
         prev_u: Msg | None = None
         for m in self.messages:
             if m.role == "user":
@@ -330,15 +334,10 @@ class ParsedSession:
                 prev_u = m
             elif m.role == "assistant":
                 self.n_assistant += 1
-                self.in_tok += m.in_tok
-                self.out_tok += m.out_tok
-                self.cache_tok += m.cache_tok
                 if prev_u is not None and m.duration_s is None:
                     m.duration_s = _span(prev_u.ts, m.ts)
             elif m.role == "tool":
                 self.n_tool += 1
-                self.in_tok += m.in_tok
-                self.out_tok += m.out_tok
         self.n_turns = self.n_user
         # The preview must be derived *before* the title falls back to it --
         # computing the title first made every untitled session fall back to
@@ -362,7 +361,7 @@ class ParsedSession:
 
 
 def _span(a: str | None, b: str | None) -> float | None:
-    from datetime import datetime
+    from datetime import datetime, timezone
 
     if not a or not b:
         return None
@@ -371,6 +370,13 @@ def _span(a: str | None, b: str | None) -> float | None:
         db = datetime.fromisoformat(b.replace("Z", "+00:00"))
     except ValueError:
         return None
+    # A transcript can mix offset-aware and naive timestamps. Subtracting the
+    # two raises TypeError, which escaped parse_file (it only catches OSError)
+    # and cost the whole conversation. Treat naive stamps as UTC.
+    if da.tzinfo is None:
+        da = da.replace(tzinfo=timezone.utc)
+    if db.tzinfo is None:
+        db = db.replace(tzinfo=timezone.utc)
     return max(0.0, (db - da).total_seconds())
 
 
@@ -428,13 +434,16 @@ def build_ribbon(messages: list[Msg], bins: int = RIBBON_BINS) -> list:
             else:
                 out.append({"y": 0, "c": 0, "m": 0})
         return out
-    from datetime import datetime
+    from datetime import datetime, timezone
 
     def epoch(s: str) -> float:
         try:
-            return datetime.fromisoformat(s.replace("Z", "+00:00")).timestamp()
+            d = datetime.fromisoformat(s.replace("Z", "+00:00"))
         except ValueError:
             return 0.0
+        if d.tzinfo is None:
+            d = d.replace(tzinfo=timezone.utc)
+        return d.timestamp()
 
     t0, t1 = epoch(stamps[0]), epoch(stamps[-1])
     span = max(1.0, t1 - t0)
@@ -621,8 +630,22 @@ def _consume(ps: ParsedSession, e: dict, ordn: int, pending_tool: dict) -> int:
                     th = int(details.get("thinking_tokens") or 0)
                 except (TypeError, ValueError):
                     th = 0
+            # Usage belongs to the API record, not to whichever block happens
+            # to come first. Measured on the real archive: 69% of assistant
+            # records carry usage but no text block (tool-only turns). Tying
+            # the counters to the first *text* block -- and gating the cache
+            # accumulation on it -- silently dropped every one of those turns,
+            # which is most of the token spend in a tool-heavy conversation.
+            ps.in_tok += it
+            ps.out_tok += ot
+            ps.cache_tok += ct
+            ps.cache_read += cr
+            ps.cache_create += cc
+            ps.thinking_tok += th
         content = msg.get("content")
-        added = False
+        # Display tokens ride on the first emitted block of any kind, so a
+        # thinking-first or tool-first turn still shows its cost somewhere.
+        shown = False
         for blk in _blocks(content):
             btype = blk.get("type")
             if btype == "text":
@@ -630,25 +653,22 @@ def _consume(ps: ParsedSession, e: dict, ordn: int, pending_tool: dict) -> int:
                 if not t:
                     continue
                 ps.messages.append(Msg(ordn, "assistant", t, ts=ts, model=model,
-                                       in_tok=it if not added else 0,
-                                       out_tok=ot if not added else 0,
-                                       cache_tok=ct if not added else 0,
+                                       in_tok=it if not shown else 0,
+                                       out_tok=ot if not shown else 0,
+                                       cache_tok=ct if not shown else 0,
                                        sidechain=side, uuid=uuid, parent_uuid=puuid))
-                if not added:
-                    # Usage belongs to the whole assistant turn, so it is
-                    # recorded on the first text block and accumulated here --
-                    # one assistant record can carry several blocks.
-                    ps.cache_read += cr
-                    ps.cache_create += cc
-                    ps.thinking_tok += th
                 ordn += 1
-                added = True
+                shown = True
             elif btype == "thinking":
                 t = (blk.get("thinking") or "").strip()
                 if t:
                     ps.messages.append(Msg(ordn, "thinking", t[:THINKING_CAP], ts=ts, model=model,
+                                           in_tok=it if not shown else 0,
+                                           out_tok=ot if not shown else 0,
+                                           cache_tok=ct if not shown else 0,
                                            sidechain=side, uuid=uuid, parent_uuid=puuid))
                     ordn += 1
+                    shown = True
             elif btype == "tool_use":
                 name = str(blk.get("name") or "tool")
                 args = blk.get("input")
@@ -659,13 +679,16 @@ def _consume(ps: ParsedSession, e: dict, ordn: int, pending_tool: dict) -> int:
                 if len(body) > TOOL_TEXT_CAP:
                     body = body[:TOOL_TEXT_CAP] + "…"
                 label = summarize_tool(name, args)
-                m = Msg(ordn, "tool", body, ts=ts, tool=name, label=label, sidechain=side,
-                        uuid=uuid, parent_uuid=puuid)
+                m = Msg(ordn, "tool", body, ts=ts, tool=name, label=label,
+                        in_tok=it if not shown else 0,
+                        out_tok=ot if not shown else 0,
+                        cache_tok=ct if not shown else 0,
+                        sidechain=side, uuid=uuid, parent_uuid=puuid)
                 ps.messages.append(m)
                 if blk.get("id"):
                     pending_tool[str(blk["id"])] = m
                 ordn += 1
-                added = True
+                shown = True
         return ordn
 
     if ty == "system":

@@ -233,7 +233,12 @@ def build(theme: str) -> dict[str, str]:
         return len(n) - 1
 
     t["muted"] = n[first_step(4.5, (t["bg"], t["surface"], t["raised"]))]
-    t["faint"] = n[first_step(3.0, (t["bg"], t["surface"]))]
+    # faint is used as *text* (timestamps, token counts, hit counts, tile
+    # notes), so it must clear 4.5:1, not the 3.0:1 non-text threshold it was
+    # generated at -- that gap is exactly what the audit missed, because faint
+    # was not in PAIRS. It targets bg/surface (where those labels sit), one
+    # step quieter than muted, which also covers raised.
+    t["faint"] = n[first_step(4.5, (t["bg"], t["surface"]))]
     t["disabled"] = n[6]
     # Rules.
     t["line"] = n[4] if theme == "dark" else n[3]
@@ -267,13 +272,23 @@ def build(theme: str) -> dict[str, str]:
         return ramps[family][7] if theme == "dark" else ramps[family][6]
 
     t["you"] = role_text("you")
-    t["you_rail"] = ramps["you"][6]
     t["you_soft"] = ramps["you"][2]
     t["claude"] = CLAUDE_INK[theme]
     t["claude_rail"] = _claude_rail(theme)
     t["machine"] = role_text("machine")
-    t["machine_rail"] = ramps["machine"][5]
     t["machine_soft"] = ramps["machine"][2]
+    # Rails are non-text marks, so 3.0:1 is the bar -- but against the surface
+    # they actually sit on. The machine rail lives on the tinted tool card
+    # (machine_soft) as well as on bg; a fixed ramp index left both rails at
+    # ~1.7-2.3:1, below even the non-text minimum the design promises.
+    def rail_step(family: str, surfaces: tuple[str, ...]) -> int:
+        for step in range(3, 12):
+            if all(wcag_ratio(ramps[family][step], s) >= 3.0 for s in surfaces):
+                return step
+        return 7
+
+    t["you_rail"] = ramps["you"][rail_step("you", (t["bg"],))]
+    t["machine_rail"] = ramps["machine"][rail_step("machine", (t["bg"], t["machine_soft"]))]
     # Thinking is Claude thinking: same family, lower contrast.
     t["thinking"] = t["muted"]
     # Status.
@@ -294,8 +309,10 @@ PAIRS = [
     ("ink", "bg", 4.5),
     ("body", "bg", 4.5),
     ("muted", "bg", 4.5),
+    ("faint", "bg", 4.5),
     ("body", "surface", 4.5),
     ("muted", "surface", 4.5),
+    ("faint", "surface", 4.5),
     ("body", "raised", 4.5),
     ("muted", "raised", 4.5),
     ("ink", "raised", 4.5),
@@ -309,6 +326,13 @@ PAIRS = [
     ("claude", "bg", 4.5),
     ("danger", "bg", 4.5),
     ("success", "bg", 4.5),
+    # Voice rails are 2-3px marks, not text: 3.0:1 non-text is the bar. They
+    # are audited here so a rail can never quietly drift below it -- and so
+    # nobody reuses a rail colour as a label (claude_rail fails 4.5 as text).
+    ("you_rail", "bg", 3.0),
+    ("claude_rail", "bg", 3.0),
+    ("machine_rail", "bg", 3.0),
+    ("machine_rail", "machine_soft", 3.0),
 ]
 
 

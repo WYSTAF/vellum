@@ -4,11 +4,21 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vellum"
-version = "1.0.0"
+version = "1.0.1"
 description = "A local reader for your Claude Code conversation archive"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
+keywords = [
+    "claude-code",
+    "conversation-archive",
+    "local-first",
+    "privacy",
+    "sqlite",
+    "full-text-search",
+    "fastapi",
+    "pywebview",
+]
 # orjson is optional: the parser falls back to the stdlib decoder without it,
 # at roughly 2x the parse time. Everything else is required.
 dependencies = [
@@ -21,6 +31,11 @@ dependencies = [
 fast = ["orjson>=3.9"]
 window = ["pywebview>=4.4"]
 dev = ["pytest>=8.0", "httpx"]
+
+[project.urls]
+Homepage = "https://github.com/WYSTAF/vellum"
+Issues = "https://github.com/WYSTAF/vellum/issues"
+Releases = "https://github.com/WYSTAF/vellum/releases"
 
 [project.scripts]
 vellum = "vellum.launcher:main"

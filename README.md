@@ -11,6 +11,9 @@ python -m vellum
 Opens a window (via pywebview if installed), otherwise your browser at
 `http://127.0.0.1:8733`. The server binds to loopback only.
 
+Download the Windows build from the
+[releases page](https://github.com/WYSTAF/vellum/releases).
+
 ---
 
 ## What it does
@@ -18,7 +21,8 @@ Opens a window (via pywebview if installed), otherwise your browser at
 - **List** every conversation with its real title, a density ribbon, and the
   facts that matter (turns, tool calls, tokens).
 - **Read** it as a document — serif prose, a hard measure cap, tool calls
-  folded into cards you can open.
+  folded into cards you can open. Long transcripts are paged in and rendered
+  250 messages at a time, never held whole.
 - **Search** every message you've ever sent, with ranked results and snippets.
 - **Export** to Markdown, HTML, JSON, text or CSV.
 - **Archive** view: totals, token spend, tool frequency, model breakdown.
@@ -162,9 +166,11 @@ Three decisions, each measured rather than assumed:
   size of the corpus and the final close paid for all of it at once — a 51 s
   stall on a rescan that had nothing to do.
 
-The reader pages in **250-message chunks**. A 3,000-message conversation is
-3.2 MB of DOM, which is seconds of layout; chunked, the first paint is
-immediate and `content-visibility` keeps the rest cheap.
+The reader fetches **500 messages per page** and renders them **250 at a
+time**. A 3,000-message conversation is 3.2 MB of DOM, which is seconds of
+layout; paged and chunked, the first paint is immediate and
+`content-visibility` keeps the rest cheap. Opening a 6,932-message
+conversation loads 500 rows, not the whole transcript.
 
 ---
 
@@ -182,7 +188,7 @@ vellum/
   app.py         HTTP layer
   launcher.py    window, or browser fallback
   ui/            index.html · app.js · css/
-tests/           34 tests, each pinning a bug found on real data
+tests/           41 tests, each pinning a bug found on real data
 ```
 
 Run the tests with `python -m pytest tests/ -q`.
@@ -199,6 +205,14 @@ The icon is a build input, so it has to exist before the spec runs. The
 result is `dist/Vellum.exe`; it is a windowed build, so startup failures are
 written to `~/.vellum/vellum.log` rather than to a console that does not
 exist.
+
+### Upgrading from 1.0.0
+
+The index schema changed so the corrected token accounting is rebuilt from
+the JSONL. The next scan (`F5`, or **Scan**) rebuilds the index once; pins
+and read marks are carried across the rebuild. Token totals will rise —
+1.0.0 dropped the usage of every assistant turn that emitted no text
+(tool-only turns, most of a tool-heavy conversation).
 
 ---
 

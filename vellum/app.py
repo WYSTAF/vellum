@@ -183,11 +183,14 @@ def api_sessions(
 
 
 @app.get("/api/session/{session_id}")
-def api_session(session_id: str, con: sqlite3.Connection = Depends(db)) -> dict:
+def api_session(
+    session_id: str,
+    include_messages: bool = True,
+    con: sqlite3.Connection = Depends(db),
+) -> dict:
     row = store.session(con, session_id)
     if row is None:
         raise HTTPException(404, "No such conversation.")
-    msgs = store.messages(con, session_id)
     forks = [dict(f) for f in store.session_forks(con, session_id)]
     tools = [
         dict(t) for t in con.execute(
@@ -195,10 +198,23 @@ def api_session(session_id: str, con: sqlite3.Connection = Depends(db)) -> dict:
             (session_id,),
         ).fetchall()
     ]
-    return {
-        "session": dict(row), "messages": [dict(m) for m in msgs],
-        "forks": forks, "tools": tools,
+    # The turn outline spans the whole conversation, so it is served as a list
+    # of user-turn ordinals rather than derived from whichever page the reader
+    # has loaded. Jumping to a far turn pages the body in up to that ordinal.
+    turns = [
+        r["ordinal"] for r in con.execute(
+            "SELECT ordinal FROM messages WHERE session_id=? AND role='user' "
+            "AND sidechain=0 ORDER BY ordinal", (session_id,),
+        ).fetchall()
+    ]
+    out = {
+        "session": dict(row), "forks": forks, "tools": tools,
+        "turns": turns,
+        "message_total": store.count_messages(con, session_id),
     }
+    if include_messages:
+        out["messages"] = [dict(m) for m in store.messages(con, session_id)]
+    return out
 
 
 @app.get("/api/messages/{session_id}")
@@ -273,12 +289,20 @@ def api_status() -> dict:
     if snap["indexed"] and not snap["running"] and snap["message"] == "Not indexed yet":
         # This process did not build the index, but one exists on disk. Report
         # what is actually in it rather than a status that reads as empty.
+        con = None
         try:
             con = store.connect(path, read_only=True)
             snap["message"] = indexer.stats_line(con)
-            con.close()
         except Exception:  # noqa: BLE001 -- a corrupt index still shows as present
             pass
+        finally:
+            # stats_line raising used to skip the close, leaking one handle
+            # per status poll -- and the UI polls every 1.2 s.
+            if con is not None:
+                try:
+                    con.close()
+                except Exception:  # noqa: BLE001
+                    pass
     return snap
 
 
